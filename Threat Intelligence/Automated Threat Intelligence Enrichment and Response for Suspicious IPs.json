@@ -1,0 +1,462 @@
+{
+  "name": "Automated Threat Intelligence Enrichment and Response for Suspicious IPs",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "threat-intel",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "61c6269a-7823-4ee7-808d-06135486233f",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -448,
+        192
+      ],
+      "webhookId": "e167db79-0767-4595-ae40-722a74fdc11f"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "virusTotalApiKey",
+              "value": "<VirusTotal API Key>",
+              "type": "string"
+            },
+            {
+              "id": "id-2",
+              "name": "abuseIPDBApiKey",
+              "value": "<AbuseIPDB API Key>",
+              "type": "string"
+            },
+            {
+              "id": "id-3",
+              "name": "alienVaultApiKey",
+              "value": "<AlienVault OTX API Key>",
+              "type": "string"
+            },
+            {
+              "id": "id-4",
+              "name": "riskThreshold",
+              "value": 70,
+              "type": "number"
+            },
+            {
+              "id": "id-5",
+              "name": "socAlertWebhook",
+              "value": "<SOC Alert Webhook URL>",
+              "type": "string"
+            },
+            {
+              "id": "id-6",
+              "name": "blockIpApiUrl",
+              "value": "<Firewall/Block IP API endpoint>",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "09bbcdd7-be19-4c0f-b8d5-ebc0b11f8a37",
+      "name": "Workflow Configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -224,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://www.virustotal.com/api/v3/ip_addresses/{{ $json.ip }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-apikey",
+              "value": "={{ $('Workflow Configuration').first().json.virusTotalApiKey }}"
+            }
+          ]
+        },
+        "options": {
+          "allowUnauthorizedCerts": false
+        }
+      },
+      "id": "e051dfad-7716-46a9-b9ed-a0581eae9f0c",
+      "name": "VirusTotal API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.abuseipdb.com/api/v2/check?ipAddress={{ $json.ip }}&maxAgeInDays=90",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Key",
+              "value": "={{ $('Workflow Configuration').first().json.abuseIPDBApiKey }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1b7e2073-6af4-458b-a89a-c2cbc302dff0",
+      "name": "AbuseIPDB API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        0,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://otx.alienvault.com/api/v1/indicators/IPv4/{{ $json.ip }}/general",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-OTX-API-KEY",
+              "value": "={{ $('Workflow Configuration').first().json.alienVaultApiKey }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1d0185f1-6646-46d3-8e90-01c28ad56a7f",
+      "name": "AlienVault OTX API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        0,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "id": "a07b4b50-4512-4970-ae03-3867cd9dd365",
+      "name": "Merge Threat Intelligence",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        224,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "ip",
+              "value": "={{ $('Workflow Configuration').first().json.ip }}",
+              "type": "string"
+            },
+            {
+              "id": "id-2",
+              "name": "virusTotalMalicious",
+              "value": "={{ $json[0].data?.attributes?.last_analysis_stats?.malicious || 0 }}",
+              "type": "number"
+            },
+            {
+              "id": "id-3",
+              "name": "abuseIPDBAbuseScore",
+              "value": "={{ $json[1].data?.abuseConfidenceScore || 0 }}",
+              "type": "number"
+            },
+            {
+              "id": "id-4",
+              "name": "alienVaultPulseCount",
+              "value": "={{ $json[2].pulse_info?.count || 0 }}",
+              "type": "number"
+            },
+            {
+              "id": "id-5",
+              "name": "riskScore",
+              "value": "={{ ($json[0].data?.attributes?.last_analysis_stats?.malicious || 0) * 10 + ($json[1].data?.abuseConfidenceScore || 0) + ($json[2].pulse_info?.count || 0) * 5 }}",
+              "type": "number"
+            },
+            {
+              "id": "id-6",
+              "name": "timestamp",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "14f1d920-021d-4873-aa2f-717c4844f59a",
+      "name": "Calculate Risk Score",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        448,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "id-1",
+              "leftValue": "={{ $json.riskScore >= $('Workflow Configuration').first().json.riskThreshold }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a14930da-5b87-491f-b82b-3dc052a2c802",
+      "name": "Check Risk Threshold",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        672,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "alertType",
+              "value": "SOC_NOTIFICATION",
+              "type": "string"
+            },
+            {
+              "id": "id-2",
+              "name": "severity",
+              "value": "HIGH",
+              "type": "string"
+            },
+            {
+              "id": "id-3",
+              "name": "message",
+              "value": "=Suspicious IP detected: {{ $json.ip }} with risk score {{ $json.riskScore }}",
+              "type": "string"
+            },
+            {
+              "id": "id-4",
+              "name": "details",
+              "value": "={{ $json }}",
+              "type": "object"
+            },
+            {
+              "id": "id-5",
+              "name": "webhookUrl",
+              "value": "={{ $('Workflow Configuration').first().json.socAlertWebhook }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5c35eaa9-99c9-467e-b83a-7380b57617fb",
+      "name": "Alert SOC",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        896,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "action",
+              "value": "BLOCK_IP",
+              "type": "string"
+            },
+            {
+              "id": "id-2",
+              "name": "ipAddress",
+              "value": "={{ $json.ip }}",
+              "type": "string"
+            },
+            {
+              "id": "id-3",
+              "name": "reason",
+              "value": "=Threat intelligence risk score: {{ $json.riskScore }}",
+              "type": "string"
+            },
+            {
+              "id": "id-4",
+              "name": "blockApiUrl",
+              "value": "={{ $('Workflow Configuration').first().json.blockIpApiUrl }}",
+              "type": "string"
+            },
+            {
+              "id": "id-5",
+              "name": "timestamp",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "076a79e4-72cf-43fc-9852-fd075fb73422",
+      "name": "Block IP Action",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        896,
+        192
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Workflow Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Workflow Configuration": {
+      "main": [
+        [
+          {
+            "node": "VirusTotal API",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "AbuseIPDB API",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "AlienVault OTX API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "VirusTotal API": {
+      "main": [
+        [
+          {
+            "node": "Merge Threat Intelligence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AbuseIPDB API": {
+      "main": [
+        [
+          {
+            "node": "Merge Threat Intelligence",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Threat Intelligence": {
+      "main": [
+        [
+          {
+            "node": "Calculate Risk Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Risk Score": {
+      "main": [
+        [
+          {
+            "node": "Check Risk Threshold",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Risk Threshold": {
+      "main": [
+        [
+          {
+            "node": "Alert SOC",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Block IP Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AlienVault OTX API": {
+      "main": [
+        [
+          {
+            "node": "Merge Threat Intelligence",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "ec9be847-ee92-4fa8-9361-492e92840be5",
+  "meta": {
+    "instanceId": "d2e025555df5e04d51f5a4e14aa8062978f3ac7e7b2d429a436738f5bc14fdab"
+  },
+  "id": "_fD_XH3HYBkCCxtB1syGG",
+  "tags": []
+}

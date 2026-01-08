@@ -1,0 +1,399 @@
+{
+  "name": "Automated Brute Force Login Detection and IP Blocking",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "id": "39bd5be8-8ddb-4625-b02f-04267ecfdedb",
+      "name": "Check Logs Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -32,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "failedLoginThreshold",
+              "value": 10,
+              "type": "number"
+            },
+            {
+              "id": "id-2",
+              "name": "alertEmail",
+              "value": "<Email address for security alerts>",
+              "type": "string"
+            },
+            {
+              "id": "id-3",
+              "name": "slackChannel",
+              "value": "<Slack channel ID for alerts>",
+              "type": "string"
+            },
+            {
+              "id": "id-4",
+              "name": "firewallApiUrl",
+              "value": "<Firewall API endpoint URL>",
+              "type": "string"
+            },
+            {
+              "id": "id-5",
+              "name": "blockedIPsSheetId",
+              "value": "<Google Sheet ID for tracking blocked IPs>",
+              "type": "string"
+            },
+            {
+              "id": "id-6",
+              "name": "adminSlackChannel",
+              "value": "<Slack channel ID for admin error alerts>",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "f11d45c9-08e4-4d36-8652-98c33adb4dfa",
+      "name": "Workflow Configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        192,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "command": "tail -n 1000 /var/log/auth.log | grep \"Failed password\""
+      },
+      "id": "a77dd1fa-5c30-4f8c-b2ec-fb5e2e6f1e8d",
+      "name": "Read Auth Logs via SSH",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        416,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const logData = $input.first().json.stdout || $input.first().json.data || '';\n\nconst ipAttempts = {};\n\nconst lines = logData.split('\\n');\n\nconst failedLoginRegex = /(?:Failed password|Invalid user).*?from\\s+(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3})/i;\nconst timestampRegex = /(\\w{3}\\s+\\d{1,2}\\s+\\d{2}:\\d{2}:\\d{2})/;\n\nfor (const line of lines) {\n  const ipMatch = line.match(failedLoginRegex);\n  \n  if (ipMatch && ipMatch[1]) {\n    const ip = ipMatch[1];\n    const timestampMatch = line.match(timestampRegex);\n    const timestamp = timestampMatch ? timestampMatch[1] : new Date().toISOString();\n    \n    if (!ipAttempts[ip]) {\n      ipAttempts[ip] = {\n        count: 0,\n        lastAttempt: timestamp\n      };\n    }\n    \n    ipAttempts[ip].count++;\n    ipAttempts[ip].lastAttempt = timestamp;\n  }\n}\n\n// Convert to array of objects\nconst results = Object.keys(ipAttempts).map(ip => ({\n  ip: ip,\n  attempts: ipAttempts[ip].count,\n  lastAttempt: ipAttempts[ip].lastAttempt\n}));\n\n// Sort by number of attempts (descending)\nresults.sort((a, b) => b.attempts - a.attempts);\n\n// Return the results\nreturn results.map(item => ({ json: item }));"
+      },
+      "id": "0409d96c-b0c0-4293-b289-d6ffb8821941",
+      "name": "Parse Logs and Count Failed Logins by IP",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "id-1",
+              "leftValue": "={{ $('Parse Logs and Count Failed Logins by IP').item.json.attempts }}",
+              "rightValue": "={{ $('Workflow Configuration').item.json.failedLoginThreshold }}",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "5f7be2d4-a96b-4e43-9a30-4a89cb273cba",
+      "name": "Check if Attempts > Threshold",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        864,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Workflow Configuration').item.json.slackChannel }}"
+        },
+        "text": "=**Brute Force Attack Detected** \n\n**IP Address:** {{ $json.ip }}\n**Failed Login Attempts:** {{ $json.attempts }}\n**Timestamp:** {{ $now.format('yyyy-MM-dd HH:mm:ss') }}\n\nThis IP has exceeded the threshold and will be blocked.",
+        "otherOptions": {}
+      },
+      "id": "fdd334cd-fbb7-4990-a667-cb4cf90fd93e",
+      "name": "Send Slack Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        1536,
+        16
+      ],
+      "webhookId": "b2b60cda-e85c-4b53-8639-415aa5a812ff"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Workflow Configuration').item.json.alertEmail }}",
+        "subject": "Security Alert: Brute Force Attack Detected",
+"message": "<h2>Security Alert: Brute Force Attack Detected</h2><p><strong>IP Address:</strong> {{ $json.ip }}</p><p><strong>Failed Login Attempts:</strong> {{ $json.attempts }}</p><p><strong>Timestamp:</strong> {{ $json.lastAttempt }}</p>"
+      },
+      "id": "4d47a604-d0fa-4fdd-8089-f78fb9d03812",
+      "name": "Send Email Alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1536,
+        208
+      ],
+      "webhookId": "d1a3a31a-01b1-4122-b7bc-0051f056a670"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Workflow Configuration').item.json.firewallApiUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ip",
+              "value": "={{ $json.ip }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3b5bf799-6ae7-405c-b7ac-e37e5f101c20",
+      "name": "Block IP via Firewall API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1536,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Workflow Configuration').item.json.blockedIPsSheetId }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Sheet1"
+        },
+        "options": {}
+      },
+      "id": "d563dd97-a240-424f-a9b3-24e569b707ce",
+      "name": "Check if IP Already Blocked",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1088,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "id-1",
+              "leftValue": "={{ $('Check if IP Already Blocked').all().map(item => item.json.ip).includes($('Parse Logs and Count Failed Logins by IP').item.json.ip) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "false"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "575d5d78-8cef-4675-abca-ec15760050e1",
+      "name": "Check if IP Not Previously Blocked",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1312,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Workflow Configuration').item.json.blockedIPsSheetId }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Sheet1"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ip": "={{ $json.ip }}",
+            "blockedAt": "={{ $now.toISO() }}",
+            "attempts": "={{ $json.attempts }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "ce8654c1-8055-48ac-b36e-48f827adc8e2",
+      "name": "Record Blocked IP",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1536,
+        592
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Check Logs Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Workflow Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Workflow Configuration": {
+      "main": [
+        [
+          {
+            "node": "Read Auth Logs via SSH",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Auth Logs via SSH": {
+      "main": [
+        [
+          {
+            "node": "Parse Logs and Count Failed Logins by IP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Logs and Count Failed Logins by IP": {
+      "main": [
+        [
+          {
+            "node": "Check if Attempts > Threshold",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if Attempts > Threshold": {
+      "main": [
+        [
+          {
+            "node": "Check if IP Already Blocked",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if IP Already Blocked": {
+      "main": [
+        [
+          {
+            "node": "Check if IP Not Previously Blocked",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if IP Not Previously Blocked": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Alert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Email Alert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Block IP via Firewall API",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Record Blocked IP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "79f6970f-77b5-4734-b0a6-7fb8a7eb0e7f",
+  "meta": {
+    "instanceId": "d2e025555df5e04d51f5a4e14aa8062978f3ac7e7b2d429a436738f5bc14fdab"
+  },
+  "id": "UU7ZxJR7735ckTx1ZRNTB",
+  "tags": []
+}
